@@ -16,7 +16,7 @@ use Carp;
 my $R_REF = 100000; # [Ω]
 
 # Number of points per measurement
-my $number_of_points = 10; # []
+my $number_of_points = 80; # []
 
 # Delay between measurement points
 my $delay_between_points = 0.33; # [s]
@@ -27,10 +27,10 @@ my $delay_between_points = 0.33; # [s]
 # see https://en.wikipedia.org/wiki/Moving_average for more information.
 
 # moving average window size, recommended to be around 10% of $number_of_points
-my $window = 1; # []
+my $window = 10; # []
 
 # the lowest n values to be averaged for determining the global minimum
-my $lowest = 1; # []
+my $lowest = 5; # []
 
 # how often to repeat a single phase or amplitude sweep
 my $repeat_measurement = 1; # []
@@ -45,11 +45,15 @@ my $repeat_measurement = 1; # []
 # The from, to and step parameters are in volts, when sweeping V_DUT, V_GS or V_DS
 # and in Hertz, when sweeping the frequency.
 my %sweep_setup = (
-    type => 'V_GS',
-    from => -2.5,
-    to =>   -3,
-    step => 0.25
+    type => 'Frequency',
+    from => 1370,
+    to =>   10000,
+    step => 5
 );
+
+# Set to 0, if you want to disable all plots. Not having plots reduces the probability of
+# an error occuring
+my $doplots = 0;
 
 # Below you define the ranges, in which the minimum is searched for.
 # Example:
@@ -402,10 +406,11 @@ print "Estimated time: ".floor($tm/(60*60))."h".$mins."m".$secs."s\n";
 sleep(3);
 
 my $capacitance_file = sweep_datafile(folder => $folder, columns => [$sweep_setup{type}, 'Capacitance', 'best_phase', 'best_amplitude'], filename => 'capacitance');
-$capacitance_file->add_plot(
+if ($doplots){
+	$capacitance_file->add_plot(
     x => $sweep_setup{type},
     y => 'Capacitance',
-);
+);}
 
 # This measurement routine contains the whole process of balancing the ICB-bridge
 # by alternately sweeping the phase and amplitude
@@ -413,13 +418,17 @@ my $capacitance_measurement = sub {
     my $sweep = shift;
     my $subfolder;
     if ($sweep_setup{type} eq 'V_DUT') {
-        $subfolder = datafolder(path => $folder->path().'/V_DUT_'.$YOKO_V_DUT->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        print "V_DUT=".$YOKO_V_DUT->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_DUT_'.$YOKO_V_DUT->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
     } elsif ($sweep_setup{type} eq 'V_GS') {
-        $subfolder = datafolder(path => $folder->path().'/V_GS_'.$YOKO_V_GS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        print "V_GS=".$YOKO_V_GS->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_GS_'.$YOKO_V_GS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
     } elsif ($sweep_setup{type} eq 'V_DS') {
-        $subfolder = datafolder(path => $folder->path().'/V_DS_'.$YOKO_V_DS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        print "V_DS=".$YOKO_V_DS->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_DS_'.$YOKO_V_DS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
     } elsif ($sweep_setup{type} eq 'Frequency') {
-        $subfolder = datafolder(path => $folder->path().'/Frequency_'.$LOCKIN_REF->cached_frq().'Hz', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        print "Frequency=".$LOCKIN_REF->cached_frq()."Hz\n";
+		$subfolder = datafolder(path => $folder->path().'/Frequency_'.$LOCKIN_REF->cached_frq().'Hz', time_prefix => 0, date_prefix => 0, copy_script => 0);
     }
 
     foreach my $c (0..$#pha_range) {
@@ -436,7 +445,7 @@ my $capacitance_measurement = sub {
           from => $pha_from, to => $pha_to, step => abs($pha_to-$pha_from)/$number_of_points,
           delay_before_loop => 3,
           delay_in_loop => $delay_between_points,
-          filename_extension => 'U_osc_ref='.$LOCKIN_REF->cached_source_level()
+          filename_extension => 'U_osc_ref='.$LOCKIN_REF->cached_source_level().'V'
         );
 
         # Clear out temporary variables
@@ -466,7 +475,7 @@ my $capacitance_measurement = sub {
 
         my $phase_folder = datafolder(path => $subfolder->path().'/Pha_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $phase_file = sweep_datafile(folder => $phase_folder, columns => $columns, filename => 'pha_ref_sweep');
-		if ($c >= $#pha_range-1 || $c == 0) {
+		if ($c >= $#pha_range-1 and $doplots || $c == 0 and $doplots) {
 			$phase_file->add_plot(
 				x => 'Pha_ref',
 				y => 'U_ac_out',
@@ -512,7 +521,7 @@ my $capacitance_measurement = sub {
           from => $amp_from, to => $amp_to, step => abs($amp_to-$amp_from)/$number_of_points,
           delay_before_loop => 3,
           delay_in_loop => $delay_between_points,
-          filename_extension => 'Pha_ref='.$LOCKIN_REF->cached_refpha()
+          filename_extension => 'Pha_ref='.$LOCKIN_REF->cached_refpha().'deg'
         );
 
         # Clear out temporary variables
@@ -542,7 +551,7 @@ my $capacitance_measurement = sub {
 
         my $amp_folder = datafolder(path => $subfolder->path().'/U_osc_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $amp_file = sweep_datafile(folder => $amp_folder, columns => $columns, filename => 'u_osc_ref_sweep');
-		if ($c >= $#pha_range-1 || $c == 0) {
+		if ($c >= $#pha_range-1 and $doplots || $c == 0 and $doplots) {
 			$amp_file->add_plot(
 				x => 'U_osc_ref',
 				y => 'U_ac_out',
