@@ -2,7 +2,6 @@ use 5.010;
 use warnings;
 use strict;
 
-use lib '/home/fabian/Perl/Lab-Measurement/lib';
 use Lab::Moose;
 use POSIX qw/ceil floor/;
 use List::Util qw/min max sum/;
@@ -212,7 +211,7 @@ my $columns = [qw/
     FRQ
 /];
 
-my $folder = datafolder(path => 'BigSweep_'.$initial_dut_frq.'Hz', time_prefix => 0);
+my $folder = datafolder(path => 'SingleCapacitanceMeasurement_'.$initial_dut_frq.'Hz', time_prefix => 0);
 
 # Define the sweeps
 

@@ -1,4 +1,7 @@
-use lib '/media/fabian/Volume/fabian/Documents/Uni/Bachelor Arbeit/Perl/Lab-Measurement/lib';
+use v5.20;
+use warnings;
+use strict;
+
 use Lab::Moose;
 
 

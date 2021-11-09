@@ -1,8 +1,7 @@
-use 5.010;
+use v5.20;
 use warnings;
 use strict;
 
-use lib '/home/fabian/Perl/Lab-Measurement/lib';
 use Lab::Moose;
 use POSIX qw/ceil floor/;
 use List::Util qw/min max sum/;
@@ -16,10 +15,10 @@ use Math::Trig;
 my $R_REF = 100000; # [Ω]
 
 # Number of points per measurement
-my $number_of_points = 40; # []
+my $number_of_points = 80; # []
 
 # Delay between measurement points
-my $delay_between_points = 0.5; # [s]
+my $delay_between_points = 0.33; # [s]
 
 # This script implements a method called the simple moving average, it basically
 # averages a number of data points in an effort to reduce noise. The amount of
@@ -27,10 +26,10 @@ my $delay_between_points = 0.5; # [s]
 # see https://en.wikipedia.org/wiki/Moving_average for more information
 
 # moving average window size, recommended to be around 10% of $number_of_points
-my $window = 5; # []
+my $window = 10; # []
 
 # the lowest n values to be averaged for determining the global minimum
-my $lowest = 3; # []
+my $lowest = 5; # []
 
 # how often to repeat a single phase or amplitude sweep
 my $repeat_measurement = 1; # []
@@ -51,12 +50,12 @@ my $repeat_measurement = 1; # []
 #   range will be used for the remaining measurements
 
 my %frq_range = (
-    from => 100,
-    to =>   200,
-    step => 100
+    from => 250, # [Hz]
+    to =>   5000, # [Hz]
+    step => 250  # [Hz]
 );
-my @pha_range = (360, 50, 15, 3, 1); # [°]
-my @amp_range = (0.1, 0.05, 0.01, 0.005, 0.0001); # [V]
+my @pha_range = (360, 50, 5, 1); # [°]
+my @amp_range = (0.1, 0.01, 0.0002); # [V]
 
 
 ### SIGNAL RECOVERY LOCK-IN AMPLIFIERS ###
@@ -65,8 +64,6 @@ my @amp_range = (0.1, 0.05, 0.01, 0.005, 0.0001); # [V]
 my $U_OSC_DUT = 1; # [V]
 my $U_OSC_OUT = 0; # [V]
 
-# Lock-In frequency
-my $initial_dut_frq = 2005; # [Hz]
 
 # lock-in time constant, accepted values are
 # 10us 20us 40us 80us 160us 320us 640us 5ms 10ms 20ms 50ms 100ms 200ms 500ms
@@ -105,7 +102,7 @@ my $V_DUT_max_amplitude = 0; # [V]
 
 ### Initialization of the devices
 
-my $connection = 'LinuxGPIB';
+my $connection = 'VISA::GPIB';
 
 my $LOCKIN_REF = instrument(
     type => 'SignalRecovery7265',
@@ -193,13 +190,17 @@ print "Setting inital parameters...\n";
 $YOKO_V_GS->set_level(value => $V_GS);
 $YOKO_V_DS->set_level(value => $V_DS);
 $YOKO_V_DUT->set_level(value => $V_DUT);
-$LOCKIN_DUT->set_frq(value => $initial_dut_frq);
+
+$LOCKIN_DUT->set_frq(value => $frq_range{from});
+$LOCKIN_OUT->set_frq(value => $frq_range{from});
+$LOCKIN_REF->set_frq(value => $frq_range{from});
 $LOCKIN_REF->set_tc(value => $initial_tc);
 $LOCKIN_DUT->set_tc(value => $initial_tc);
 $LOCKIN_OUT->set_tc(value => $initial_tc);
 $LOCKIN_DUT->set_level(value => $U_OSC_DUT); # defines the DUT voltage amplitude - do not set to zero or the amplitude ratio will go to infinity
 $LOCKIN_REF->set_level(value => $amp_range[0]);
 $LOCKIN_OUT->set_level(value => $U_OSC_OUT);
+
 $AGILENT_I_D->sense_function(value => 'CURR');
 
 # Create the datafiles
@@ -217,9 +218,17 @@ my $columns = [qw/
     FRQ
 /];
 
-my $folder = datafolder(path => 'SuperBigSweep', time_prefix => 0);
+my $folder = datafolder(path => 'FrequencySweep', time_prefix => 0);
 
 # Define the sweeps
+
+my $frequency_sweep = sweep(
+  type       => 'Step::Frequency',
+  instrument => [$LOCKIN_REF, $LOCKIN_DUT, $LOCKIN_OUT],
+  from => $frq_range{from}, to => $frq_range{to}, step => $frq_range{step},
+  delay_before_loop => 3,
+  delay_in_loop => 10
+);
 
 my $phase_sweep = sweep(
   type       => 'Step::Phase',
@@ -318,19 +327,25 @@ if ($#pha_range > $#amp_range) {until ($#pha_range == $#amp_range){$amp_range[$#
 elsif ($#pha_range < $#amp_range) {until ($#pha_range == $#amp_range){$pha_range[$#pha_range+$_+1] = $pha_range[$#pha_range];}}
 
 # Compute the estimated runtime
-my $tm = ($#pha_range+1)*2*$repeat_measurement*($number_of_points*$delay_between_points+3+0.1)+($#pha_range+1)*3*2;
+my $tm = (($#pha_range+1)*2*$repeat_measurement*($number_of_points*$delay_between_points*1.1+3+0.1)+($#pha_range+1)*3*2)*($frq_range{to}-$frq_range{from})/$frq_range{step};
 my $secs = $tm % 60;
-print "Estimated time: ".floor($tm/60)."m".$secs."s\n";
+my $mins = $tm/60 % 60;
+
+print "Estimated time: ".floor($tm/(60*60))."h".$mins."m".$secs."s\n";
 
 ### Begin Sweep
 
 sleep(3);
 
-for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step}) {
-    $LOCKIN_REF->set_frq(value => $frq);
-    $LOCKIN_DUT->set_frq(value => $frq);
-    $LOCKIN_OUT->set_frq(value => $frq);
-    
+my $frequency_file = sweep_datafile(folder => $folder, columns => [qw/FRQ best_phase best_amplitude Capacitance/], filename => 'frequency_sweep');
+$frequency_file->add_plot(
+    x => 'FRQ',
+    y => 'Capacitance',
+);
+
+my $frequency_measurement = sub {
+    my $sweep = shift;
+    my $frequency_folder = datafolder(path => $folder->path().'/Frequency_'.$LOCKIN_REF->cached_frq().'Hz', time_prefix => 0, date_prefix => 0, copy_script => 0);
     foreach my $c (0..$#pha_range) {
         $LOCKIN_REF->set_level(value => $curramp);
         $LOCKIN_OUT->auto_sen(value => $max_phase_amp);
@@ -373,13 +388,15 @@ for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step
             }
         );
 
-        my $phase_folder = datafolder(path => $folder->path().'/Pha_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        my $phase_folder = datafolder(path => $frequency_folder->path().'/Pha_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $phase_file = sweep_datafile(folder => $phase_folder, columns => $columns, filename => 'pha_ref_sweep');
-        $phase_file->add_plot(
-            x => 'Pha_ref',
-            y => 'U_ac_out',
-        );
-
+		if ($c >= $#pha_range-1 || $c == 0) {
+			$phase_file->add_plot(
+				x => 'Pha_ref',
+				y => 'U_ac_out',
+			);
+		}
+		
         $repeat_phase->start(
             slave => $phase_sweep,
             measurement => $phase_measurement,
@@ -397,7 +414,7 @@ for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step
 
         # Compute the lowest Amplitude as the arithmetic mean of the lowest $lowest data points
         $currphase = sum(@{$pha_results{Pha_ref}}[@sorted_indexes[-$lowest..-1]])/$lowest;
-        $max_phase_amp = ${$pha_results{Pha_ref}}[@sorted_indexes[0]];
+        $max_phase_amp = ${$pha_results{U_ac_out}}[$sorted_indexes[0]];
 
         # Set the new sweep ranges for the next sweep
         $pha_from = $currphase - $pha_range[$c]/2;
@@ -448,13 +465,15 @@ for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step
             }
         );
 
-        my $amp_folder = datafolder(path => $folder->path().'/U_osc_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        my $amp_folder = datafolder(path => $frequency_folder->path().'/U_osc_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $amp_file = sweep_datafile(folder => $amp_folder, columns => $columns, filename => 'u_osc_ref_sweep');
-        $amp_file->add_plot(
-            x => 'U_osc_ref',
-            y => 'U_ac_out',
-        );
-
+		if ($c >= $#pha_range-1 || $c == 0) {
+			$amp_file->add_plot(
+				x => 'U_osc_ref',
+				y => 'U_ac_out',
+			);
+		}
+		
         $repeat_amp->start(
             slave => $amp_sweep,
             measurement => $amp_measurement,
@@ -472,7 +491,7 @@ for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step
 
         # Compute the lowest Amplitude as the arithmetic mean of the lowest $lowest data points
         $curramp = sum(@{$amp_results{U_osc_ref}}[@sorted_indexes[-$lowest..-1]])/$lowest;
-        $max_amp_amp = ${$amp_results{U_osc_ref}}[@sorted_indexes[0]];
+        $max_amp_amp = ${$amp_results{U_ac_out}}[$sorted_indexes[0]];
 
         # Set the new sweep ranges for the next sweep
         $amp_from = $curramp - $amp_range[$c]/2;
@@ -482,14 +501,39 @@ for (my $frq = $frq_range{from}; $frq <= $frq_range{to}; $frq += $frq_range{step
         print "Amplitude: ".$curramp."\n";
     }
 
-    my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$initial_dut_frq);
+    my $frq = $LOCKIN_REF->cached_frq();
+    my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$frq);
+	
+	$prel = undef;
+	$len = undef;
+	@sorted_indexes = ();
+	$pha_from = 0;
+	$pha_to = $pha_range[0];
+	$amp_from = 0;
+	$amp_to = $amp_range[0];
+	%pha_results = ();
+	%amp_results = ();
+	$max_phase_amp = 6e-3;
+	$max_amp_amp = 5e-3;
+	
+    $sweep->log(
+        FRQ         => $frq,
+		best_phase	=> $currphase,
+		best_amplitude => $curramp,
+        Capacitance => $cap,
+    );
+	
+	$currphase = undef;
+	$curramp = $amp_range[0];
+};
 
-    print "# # #\n";
-    print "# # # Phase: ".$currphase." Amplitude: ".$curramp."\n";
-    print "# # # Computed Capacitance: ".$cap."pF\n";
-    print "# # #\n";
 
-}
+$frequency_sweep->start(
+    measurement => $frequency_measurement,
+    datafile => $frequency_file,
+    time_prefix => 0,
+    folder => $folder
+);
 
 print "Setting the Yokos to 0...\n";
 $YOKO_V_DS->set_level(value => 0);
