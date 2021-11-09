@@ -1,12 +1,12 @@
-use 5.010;
+use v5.20;
 use warnings;
 use strict;
 
-use lib '/home/fabian/Perl/Lab-Measurement/lib';
 use Lab::Moose;
 use POSIX qw/ceil floor/;
 use List::Util qw/min max sum/;
 use Math::Trig;
+use Carp;
 
 ### Define all necessary parameters here
 
@@ -16,10 +16,10 @@ use Math::Trig;
 my $R_REF = 100000; # [Ω]
 
 # Number of points per measurement
-my $number_of_points = 3; # []
+my $number_of_points = 80; # []
 
 # Delay between measurement points
-my $delay_between_points = 0.5; # [s]
+my $delay_between_points = 0.33; # [s]
 
 # This script implements a method called the simple moving average, it basically
 # averages a number of data points in an effort to reduce noise. The amount of
@@ -27,10 +27,10 @@ my $delay_between_points = 0.5; # [s]
 # see https://en.wikipedia.org/wiki/Moving_average for more information.
 
 # moving average window size, recommended to be around 10% of $number_of_points
-my $window = 1; # []
+my $window = 10; # []
 
 # the lowest n values to be averaged for determining the global minimum
-my $lowest = 1; # []
+my $lowest = 5; # []
 
 # how often to repeat a single phase or amplitude sweep
 my $repeat_measurement = 1; # []
@@ -45,11 +45,15 @@ my $repeat_measurement = 1; # []
 # The from, to and step parameters are in volts, when sweeping V_DUT, V_GS or V_DS
 # and in Hertz, when sweeping the frequency.
 my %sweep_setup = (
-    type => 'V_DS'
-    from => 0.01,
-    to =>   2,
-    step => 0.0001
+    type => 'Frequency',
+    from => 1370,
+    to =>   10000,
+    step => 5
 );
+
+# Set to 0, if you want to disable all plots. Not having plots reduces the probability of
+# an error occuring
+my $doplots = 0;
 
 # Below you define the ranges, in which the minimum is searched for.
 # Example:
@@ -117,7 +121,7 @@ my $V_DUT_max_amplitude = 0; # [V]
 
 ### Initialization of the devices
 
-my $connection = 'Debug';
+my $connection = 'VISA::GPIB';
 
 my $LOCKIN_REF = instrument(
     type => 'SignalRecovery7265',
@@ -199,6 +203,11 @@ my $AGILENT_I_D = instrument(
     },
 );
 
+# Safety measure
+if ($U_OSC_DUT == 0) {
+	croak 'U_OSC_DUT cannot be 0';
+}
+
 # Set some parameters
 
 print "Setting inital parameters...\n";
@@ -226,6 +235,7 @@ $LOCKIN_OUT->set_tc(value => $initial_tc);
 $LOCKIN_DUT->set_level(value => $U_OSC_DUT); # defines the DUT voltage amplitude - do not set to zero or the amplitude ratio will go to infinity
 $LOCKIN_REF->set_level(value => $amp_range[0]);
 $LOCKIN_OUT->set_level(value => $U_OSC_OUT);
+$LOCKIN_REF->set_phase(value => 0);
 
 $AGILENT_I_D->sense_function(value => 'CURR');
 
@@ -261,7 +271,7 @@ if ($sweep_setup{type} eq 'Frequency') {
       delay_before_loop => 3,
       delay_in_loop => 5
     );
-} else if ($sweep_setup{type} eq 'V_DS') {
+} elsif ($sweep_setup{type} eq 'V_DS') {
     $main_sweep = sweep(
       type       => 'Step::Voltage',
       instrument => $YOKO_V_DS,
@@ -269,7 +279,7 @@ if ($sweep_setup{type} eq 'Frequency') {
       delay_before_loop => 3,
       delay_in_loop => 5,
     );
-} else if ($sweep_setup{type} eq 'V_GS') {
+} elsif ($sweep_setup{type} eq 'V_GS') {
     $main_sweep = sweep(
       type       => 'Step::Voltage',
       instrument => $YOKO_V_GS,
@@ -277,7 +287,7 @@ if ($sweep_setup{type} eq 'Frequency') {
       delay_before_loop => 3,
       delay_in_loop => 5,
     );
-} else if ($sweep_setup{type} eq 'V_DUT') {
+} elsif ($sweep_setup{type} eq 'V_DUT') {
     $main_sweep = sweep(
       type       => 'Step::Voltage',
       instrument => $YOKO_V_DUT,
@@ -386,17 +396,21 @@ if ($#pha_range > $#amp_range) {until ($#pha_range == $#amp_range){$amp_range[$#
 elsif ($#pha_range < $#amp_range) {until ($#pha_range == $#amp_range){$pha_range[$#pha_range+$_+1] = $pha_range[$#pha_range];}}
 
 # Compute the estimated runtime
-my $tm = (($#pha_range+1)*2*$repeat_measurement*($number_of_points*$delay_between_points+3+0.1)+($#pha_range+1)*3*2)*($frq_range{to}-$frq_range{from})/$frq_range{step};
+my $tm = (($#pha_range+1)*2*$repeat_measurement*($number_of_points*$delay_between_points*1.1+3+0.1)+($#pha_range+1)*3*2)*(abs($sweep_setup{to}-$sweep_setup{from}))/$sweep_setup{step};
 my $secs = $tm % 60;
-print "Estimated time: ".floor($tm/60)."m".$secs."s\n";
+my $mins = $tm/60 % 60;
+
+print "Estimated time: ".floor($tm/(60*60))."h".$mins."m".$secs."s\n";
+
 
 sleep(3);
 
-my $capacitance_file = sweep_datafile(folder => $folder, columns => [$sweep_setup{type}, 'Capacitance'], filename => 'capacitance');
-$capacitance_file->add_plot(
+my $capacitance_file = sweep_datafile(folder => $folder, columns => [$sweep_setup{type}, 'Capacitance', 'best_phase', 'best_amplitude'], filename => 'capacitance');
+if ($doplots){
+	$capacitance_file->add_plot(
     x => $sweep_setup{type},
     y => 'Capacitance',
-);
+);}
 
 # This measurement routine contains the whole process of balancing the ICB-bridge
 # by alternately sweeping the phase and amplitude
@@ -404,13 +418,17 @@ my $capacitance_measurement = sub {
     my $sweep = shift;
     my $subfolder;
     if ($sweep_setup{type} eq 'V_DUT') {
-        $subfolder = datafolder(path => $folder->path().'/V_DUT_'.$YOKO_V_DUT->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
-    } else if ($sweep_setup{type} eq 'V_GS') {
-        $subfolder = datafolder(path => $folder->path().'/V_GS_'.$YOKO_V_GS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
-    } else if ($sweep_setup{type} eq 'V_DS') {
-        $subfolder = datafolder(path => $folder->path().'/V_DS_'.$YOKO_V_DS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
-    } else if ($sweep_setup{type} eq 'Frequency') {
-        $subfolder = datafolder(path => $folder->path().'/Frequency_'.$LOCKIN_REF->cached_frq().'Hz', time_prefix => 0, date_prefix => 0, copy_script => 0);
+        print "V_DUT=".$YOKO_V_DUT->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_DUT_'.$YOKO_V_DUT->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+    } elsif ($sweep_setup{type} eq 'V_GS') {
+        print "V_GS=".$YOKO_V_GS->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_GS_'.$YOKO_V_GS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+    } elsif ($sweep_setup{type} eq 'V_DS') {
+        print "V_DS=".$YOKO_V_DS->cached_source_level()."V\n";
+		$subfolder = datafolder(path => $folder->path().'/V_DS_'.$YOKO_V_DS->cached_source_level().'V', time_prefix => 0, date_prefix => 0, copy_script => 0);
+    } elsif ($sweep_setup{type} eq 'Frequency') {
+        print "Frequency=".$LOCKIN_REF->cached_frq()."Hz\n";
+		$subfolder = datafolder(path => $folder->path().'/Frequency_'.$LOCKIN_REF->cached_frq().'Hz', time_prefix => 0, date_prefix => 0, copy_script => 0);
     }
 
     foreach my $c (0..$#pha_range) {
@@ -427,7 +445,7 @@ my $capacitance_measurement = sub {
           from => $pha_from, to => $pha_to, step => abs($pha_to-$pha_from)/$number_of_points,
           delay_before_loop => 3,
           delay_in_loop => $delay_between_points,
-          filename_extension => 'U_osc_ref='.$LOCKIN_REF->cached_source_level()
+          filename_extension => 'U_osc_ref='.$LOCKIN_REF->cached_source_level().'V'
         );
 
         # Clear out temporary variables
@@ -457,7 +475,12 @@ my $capacitance_measurement = sub {
 
         my $phase_folder = datafolder(path => $subfolder->path().'/Pha_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $phase_file = sweep_datafile(folder => $phase_folder, columns => $columns, filename => 'pha_ref_sweep');
-
+		if ($c >= $#pha_range-1 and $doplots || $c == 0 and $doplots) {
+			$phase_file->add_plot(
+				x => 'Pha_ref',
+				y => 'U_ac_out',
+			);
+		}
         $repeat_phase->start(
             slave => $phase_sweep,
             measurement => $phase_measurement,
@@ -475,7 +498,7 @@ my $capacitance_measurement = sub {
 
         # Compute the lowest Amplitude as the arithmetic mean of the lowest $lowest data points
         $currphase = sum(@{$pha_results{Pha_ref}}[@sorted_indexes[-$lowest..-1]])/$lowest;
-        $max_phase_amp = ${$pha_results{Pha_ref}}[$sorted_indexes[0]];
+        $max_phase_amp = ${$pha_results{U_ac_out}}[$sorted_indexes[0]];
 
         # Set the new sweep ranges for the next sweep
         $pha_from = $currphase - $pha_range[$c]/2;
@@ -498,7 +521,7 @@ my $capacitance_measurement = sub {
           from => $amp_from, to => $amp_to, step => abs($amp_to-$amp_from)/$number_of_points,
           delay_before_loop => 3,
           delay_in_loop => $delay_between_points,
-          filename_extension => 'Pha_ref='.$LOCKIN_REF->cached_refpha()
+          filename_extension => 'Pha_ref='.$LOCKIN_REF->cached_refpha().'deg'
         );
 
         # Clear out temporary variables
@@ -528,7 +551,12 @@ my $capacitance_measurement = sub {
 
         my $amp_folder = datafolder(path => $subfolder->path().'/U_osc_ref_Sweep', time_prefix => 0, date_prefix => 0, copy_script => 0);
         my $amp_file = sweep_datafile(folder => $amp_folder, columns => $columns, filename => 'u_osc_ref_sweep');
-
+		if ($c >= $#pha_range-1 and $doplots || $c == 0 and $doplots) {
+			$amp_file->add_plot(
+				x => 'U_osc_ref',
+				y => 'U_ac_out',
+			);
+		}
         $repeat_amp->start(
             slave => $amp_sweep,
             measurement => $amp_measurement,
@@ -546,7 +574,7 @@ my $capacitance_measurement = sub {
 
         # Compute the lowest Amplitude as the arithmetic mean of the lowest $lowest data points
         $curramp = sum(@{$amp_results{U_osc_ref}}[@sorted_indexes[-$lowest..-1]])/$lowest;
-        $max_amp_amp = ${$amp_results{U_osc_ref}}[$sorted_indexes[0]];
+        $max_amp_amp = ${$amp_results{U_ac_out}}[$sorted_indexes[0]];
 
         # Set the new sweep ranges for the next sweep
         $amp_from = $curramp - $amp_range[$c]/2;
@@ -554,31 +582,53 @@ my $capacitance_measurement = sub {
         $amp_to = $curramp + $amp_range[$c]/2;
 
         print "Amplitude: ".$curramp."\n";
-    }
+	}
+	
+	my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$LOCKIN_REF->cached_frq());
+	$prel = undef;
+	$len = undef;
+	@sorted_indexes = ();
+	$pha_from = 0;
+	$pha_to = $pha_range[0];
+	$amp_from = 0;
+	$amp_to = $amp_range[0];
+	%pha_results = ();
+	%amp_results = ();
+	$max_phase_amp = 6e-3;
+	$max_amp_amp = 5e-3;
 
-    my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$frq);
-
-    if ($sweep_setup{type} eq 'V_DUT') {
-        $sweep->log(
-            V_DUT       => $YOKO_V_DUT->cached_source_level(),
-            Capacitance => $cap
-        );
-    } else if ($sweep_setup{type} eq 'V_GS') {
-        $sweep->log(
-            V_GS        => $YOKO_V_GS->cached_source_level(),
-            Capacitance => $cap
-        );
-    } else if ($sweep_setup{type} eq 'V_DS') {
-        $sweep->log(
-            V_DS        => $YOKO_V_DS->cached_source_level(),
-            Capacitance => $cap
-        );
-    } else if ($sweep_setup{type} eq 'Frequency') {
-        $sweep->log(
-            Frequency   => $LOCKIN_REF->cached_frq(),
-            Capacitance => $cap
-        );
-    }
+	if ($sweep_setup{type} eq 'V_DUT') {
+		$sweep->log(
+			V_DUT       => $YOKO_V_DUT->cached_source_level(),
+			Capacitance => $cap,
+			best_phase	=> $currphase,
+			best_amplitude => $curramp,
+		);
+	} elsif ($sweep_setup{type} eq 'V_GS') {
+		$sweep->log(
+			V_GS        => $YOKO_V_GS->cached_source_level(),
+			Capacitance => $cap,
+			best_phase	=> $currphase,
+			best_amplitude => $curramp,
+		);
+	} elsif ($sweep_setup{type} eq 'V_DS') {
+		$sweep->log(
+			V_DS        => $YOKO_V_DS->cached_source_level(),
+			Capacitance => $cap,
+			best_phase	=> $currphase,
+			best_amplitude => $curramp,
+		);
+	} elsif ($sweep_setup{type} eq 'Frequency') {
+		$sweep->log(
+			Frequency   => $LOCKIN_REF->cached_frq(),
+			Capacitance => $cap,
+			best_phase	=> $currphase,
+			best_amplitude => $curramp,
+		);
+	}
+	
+	$currphase = undef;
+	$curramp = $amp_range[0];
 };
 
 # Simply execute the sweep
