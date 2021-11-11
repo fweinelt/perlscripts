@@ -583,7 +583,7 @@ my $capacitance_measurement = sub {
 
         print "Amplitude: ".$curramp."\n";
 	}
-	
+
 	my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$LOCKIN_REF->cached_frq());
 	$prel = undef;
 	$len = undef;
@@ -626,7 +626,7 @@ my $capacitance_measurement = sub {
 			best_amplitude => $curramp,
 		);
 	}
-	
+
 	$currphase = undef;
 	$curramp = $amp_range[0];
 };

@@ -47,7 +47,7 @@ my $repeat_measurement = 1; # []
 my %sweep_setup = (
     type => 'Frequency',
     from => 1370,
-    to =>   10000,
+    to =>   1885,
     step => 5
 );
 
@@ -70,8 +70,8 @@ my $doplots = 0;
 #   value but the second range still has some steps to go, the lowest value of the first
 #   range will be used for the remaining measurements
 
-my @pha_range = (360, 50); # [°]
-my @amp_range = (0.1, 0.05); # [V]
+my @pha_range = (360, 50, 5, 3); # [°]
+my @amp_range = (0.1, 0.01, 0.001, 0.0005); # [V]
 
 
 ### SIGNAL RECOVERY LOCK-IN AMPLIFIERS ###
@@ -583,7 +583,7 @@ my $capacitance_measurement = sub {
 
         print "Amplitude: ".$curramp."\n";
 	}
-	
+
 	my $cap = sin(-2*pi()*$currphase/360)*1000000000000*$curramp/($U_OSC_DUT*$R_REF*2*pi()*$LOCKIN_REF->cached_frq());
 	$prel = undef;
 	$len = undef;
@@ -626,7 +626,7 @@ my $capacitance_measurement = sub {
 			best_amplitude => $curramp,
 		);
 	}
-	
+
 	$currphase = undef;
 	$curramp = $amp_range[0];
 };
