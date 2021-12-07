@@ -14,4 +14,4 @@ $connection->set_termchar(termchar => "\r");
 $connection->enable_read_termchar();
 
 
-say $connection->Query(command => "\@0V\r");
+say $connection->Query(command => "\@6R1\r");

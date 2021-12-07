@@ -22,7 +22,18 @@ my $IPS = instrument(
 		base_connection => $connection,
 		isobus_address => 2
 	},
-	max_field_rates => [0.2, 0.1],
-	max_fields => [0.1, 0.2],
+	max_field_rates => [0.8, 0.3],
+	max_fields => [0.1, 0.5],
 );
+
+my $ILM = instrument(
+	type => 'OI_ILM210', 
+	connection_type => 'IsoBus', 
+	connection_options => {
+		base_connection => $connection,
+		isobus_address => 6
+	}
+);
+
+say $ITC->get_value();
 
