@@ -62,9 +62,7 @@ sub Clear {
 	$self->base_connection->Clear( %args );
 }
 
-with qw/
-    Lab::Moose::Connection
-    /;
+with 'Lab::Moose::Connection';
 
 __PACKAGE__->meta->make_immutable();
 
